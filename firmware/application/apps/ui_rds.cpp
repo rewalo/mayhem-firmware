@@ -106,16 +106,6 @@ RDSDateTimeView::RDSDateTimeView(
     add_children({&labels});
 }
 
-float RDSAudioView::audio_gain() const {
-    const float gains[] = {0.5f, 1.0f, 1.5f, 2.0f};
-    return gains[options_audio_gain.selected_index()];
-}
-
-float RDSAudioView::rds_injection_gain() const {
-    const float gains[] = {0.02f, 0.03f, 0.04f, 0.05f};
-    return gains[options_rds_level.selected_index()];
-}
-
 RDSAudioView::RDSAudioView(
     NavigationView& nav,
     Rect parent_rect)
@@ -123,30 +113,59 @@ RDSAudioView::RDSAudioView(
       nav_{nav} {
     set_type("audio");
 
-    options_source.on_change = [this](size_t, OptionsField::value_t v) {
-        file_path_ = std::filesystem::path{};
-        text_file.set("-");
-        button_file.hidden(v != 2);
-        text_file.hidden(v != 2);
-    };
-
-    button_file.on_select = [this, &nav](Button&) {
-        auto open_view = nav.push<FileLoadView>(".WAV");
+    auto open_file_picker = [this]() {
+        auto open_view = nav_.push<FileLoadView>(".WAV");
+        open_view->push_dir(wav_dir);
         open_view->on_changed = [this](std::filesystem::path path) {
             file_path_ = path;
             text_file.set(path.filename().string().substr(0, 22));
         };
     };
 
+    options_source.on_change = [this, open_file_picker](size_t, OptionsField::value_t v) {
+        if (v != 2) {
+            file_path_ = std::filesystem::path{};
+            text_file.set("-");
+        }
+
+        button_file.hidden(v != 2);
+        text_file.hidden(v != 2);
+        button_mic_hold.hidden(v != 1);
+
+        if (on_source_change) {
+            on_source_change(v);
+        }
+
+        if (v == 2 && file_path_.empty()) {
+            open_file_picker();
+        }
+    };
+
+    button_file.on_select = [open_file_picker](Button&) {
+        open_file_picker();
+    };
+
     button_file.hidden(true);
     text_file.hidden(true);
+    button_mic_hold.hidden(true);
+
+    button_mic_hold.on_touch_press = [this](Button&) {
+        if (on_mic_press) {
+            on_mic_press();
+        }
+    };
+
+    button_mic_hold.on_touch_release = [this](Button&) {
+        if (on_mic_release) {
+            on_mic_release();
+        }
+    };
 
     add_children({&labels,
                   &options_source,
-                  &options_audio_gain,
-                  &options_rds_level,
                   &button_file,
-                  &text_file});
+                  &text_file,
+                  &button_mic_hold});
 }
 
 RDSThread::RDSThread(
@@ -200,11 +219,11 @@ void RDSView::focus() {
 }
 
 RDSView::~RDSView() {
-    transmitter_model.disable();
+    stop_tx();
     baseband::shutdown();
 }
 
-void RDSView::start_tx() {
+bool RDSView::start_tx() {
     rds_flags.PI_code = sym_pi_code.to_integer();
     rds_flags.PTY = options_pty.selected_index_value();
     rds_flags.DI = view_PSN.mono_stereo ? 1 : 0;
@@ -228,22 +247,27 @@ void RDSView::start_tx() {
     else
         frame_datetime.clear();
 
-    /* Audio: send config to baseband */
+    /* Audio source config to baseband. */
     uint8_t src = view_audio.audio_source_index();
-    float rds_gain = (src == 0) ? 1.0f : view_audio.rds_injection_gain();
-    baseband::set_rds_audio_config(src, view_audio.audio_gain(), rds_gain);
+    float rds_gain = (src == 0) ? 1.0f : 0.04f;
+    baseband::set_rds_audio_config(src, 1.0f, rds_gain);
 
     /* File mode: start replay before TX */
-    if (src == 2 && !view_audio.file_path().empty()) {
+    if (src == 2) {
+        if (view_audio.file_path().empty()) {
+            nav_.display_modal("Error", "Select a WAV file first.");
+            return false;
+        }
+
         replay_ready_signal = false;
         auto reader = std::make_unique<WAVFileReader>();
         if (!reader->open(view_audio.file_path())) {
             nav_.display_modal("Error", "Cannot open WAV file.");
-            return;
+            return false;
         }
         if ((reader->channels() != 1) || ((reader->bits_per_sample() != 8) && (reader->bits_per_sample() != 16))) {
             nav_.display_modal("Error", "WAV must be 8 or 16-bit mono.");
-            return;
+            return false;
         }
         baseband::set_sample_rate(reader->sample_rate());
         replay_thread = std::make_unique<ReplayThread>(
@@ -258,8 +282,19 @@ void RDSView::start_tx() {
     }
 
     transmitter_model.enable();
-
+    tx_thread.reset();
     tx_thread = std::make_unique<RDSThread>(frames);
+    return true;
+}
+
+void RDSView::stop_tx() {
+    tx_thread.reset();
+    replay_thread.reset();
+    baseband::replay_stop();
+    tx_view.set_transmitting(false);
+    transmitter_model.disable();
+    txing = false;
+    mic_hold_active_ = false;
 }
 
 RDSView::RDSView(
@@ -289,6 +324,32 @@ RDSView::RDSView(
 
     options_pty.set_selected_index(0);  // None
 
+    view_audio.on_source_change = [this](uint8_t source) {
+        mic_hold_active_ = false;
+        if (source != 1 && txing) {
+            stop_tx();
+        }
+    };
+
+    view_audio.on_mic_press = [this]() {
+        if (view_audio.audio_source_index() != 1) {
+            return;
+        }
+
+        if (!txing && start_tx()) {
+            tx_view.set_transmitting(true);
+            txing = true;
+        }
+
+        mic_hold_active_ = txing;
+    };
+
+    view_audio.on_mic_release = [this]() {
+        if (mic_hold_active_ && view_audio.audio_source_index() == 1) {
+            stop_tx();
+        }
+    };
+
     tx_view.on_edit_frequency = [this, &nav]() {
         auto new_view = nav.push<FrequencyKeypadView>(transmitter_model.target_frequency());
         new_view->on_changed = [this](rf::Frequency f) {
@@ -297,17 +358,14 @@ RDSView::RDSView(
     };
 
     tx_view.on_start = [this]() {
-        start_tx();
-        tx_view.set_transmitting(true);
-        txing = true;
+        if (start_tx()) {
+            tx_view.set_transmitting(true);
+            txing = true;
+        }
     };
 
     tx_view.on_stop = [this]() {
-        replay_thread.reset();
-        baseband::replay_stop();
-        tx_view.set_transmitting(false);
-        transmitter_model.disable();
-        txing = false;
+        stop_tx();
     };
 }
 

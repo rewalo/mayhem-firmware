@@ -62,6 +62,9 @@ class RDSProcessor : public BasebandProcessor {
     uint32_t resample_inc{0};
     uint32_t resample_acc{0};
     uint8_t bytes_per_sample{2};
+    uint8_t mic_index{0};
+    uint32_t mic_phase{0};
+    int32_t current_audio_sample{0};
 
     uint16_t message_length{0};
     int8_t re{0}, im{0};

@@ -105,9 +105,10 @@ class RDSAudioView : public OptionTabView {
     RDSAudioView(NavigationView& nav, Rect parent_rect);
 
     uint8_t audio_source_index() const { return options_source.selected_index_value(); }
-    float audio_gain() const;
-    float rds_injection_gain() const;
     const std::filesystem::path& file_path() const { return file_path_; }
+    std::function<void(uint8_t)> on_source_change{};
+    std::function<void()> on_mic_press{};
+    std::function<void()> on_mic_release{};
 
    private:
     NavigationView& nav_;
@@ -115,9 +116,7 @@ class RDSAudioView : public OptionTabView {
 
     Labels labels{
         {{2 * 8, 2 * 8}, "Source:", Theme::getInstance()->fg_light->foreground},
-        {{2 * 8, 6 * 8}, "Audio gain:", Theme::getInstance()->fg_light->foreground},
-        {{2 * 8, 10 * 8}, "RDS level:", Theme::getInstance()->fg_light->foreground},
-        {{2 * 8, 14 * 8}, "File:", Theme::getInstance()->fg_light->foreground}};
+        {{2 * 8, 6 * 8}, "File:", Theme::getInstance()->fg_light->foreground}};
 
     OptionsField options_source{
         {12 * 8, 2 * 8},
@@ -126,28 +125,16 @@ class RDSAudioView : public OptionTabView {
          {"Mic", 1},
          {"File", 2}}};
 
-    OptionsField options_audio_gain{
-        {12 * 8, 6 * 8},
-        8,
-        {{"50%", 0},
-         {"100%", 1},
-         {"150%", 2},
-         {"200%", 3}}};
-
-    OptionsField options_rds_level{
-        {12 * 8, 10 * 8},
-        8,
-        {{"2%", 0},
-         {"3%", 1},
-         {"4%", 2},
-         {"5%", 3}}};
-
     Button button_file{
-        {12 * 8, 14 * 8, 8 * 8, 28},
+        {12 * 8, 6 * 8, 8 * 8, 28},
         "Select"};
     Text text_file{
-        {2 * 8, 16 * 8, 26 * 8, 16},
+        {2 * 8, 10 * 8, 26 * 8, 16},
         "-"};
+    Button button_mic_hold{
+        {UI_POS_X_CENTER(8), 14 * 8, UI_POS_WIDTH(8), 32},
+        "PTT TX",
+        true};
 };
 
 class RDSThread {
@@ -201,10 +188,12 @@ class RDSView : public View {
     std::vector<RDSGroup>* frames[3]{&frame_psn, &frame_radiotext, &frame_datetime};
 
     bool txing = false;
+    bool mic_hold_active_{false};
 
     uint16_t message_length{0};
 
-    void start_tx();
+    bool start_tx();
+    void stop_tx();
 
     Rect view_rect = {0, 8 * 8, screen_width, 192};
 
@@ -376,6 +365,21 @@ class RDSView : public View {
     const size_t replay_buffer_count{3};
     std::unique_ptr<ReplayThread> replay_thread{};
     bool replay_ready_signal{false};
+
+    MessageHandlerRegistration message_handler_replay_thread_done{
+        Message::ID::ReplayThreadDone,
+        [this](const Message* const) {
+            this->stop_tx();
+        }};
+
+    MessageHandlerRegistration message_handler_fifo_signal{
+        Message::ID::RequestSignal,
+        [this](const Message* const p) {
+            const auto message = static_cast<const RequestSignalMessage*>(p);
+            if (message->signal == RequestSignalMessage::Signal::FillRequest) {
+                this->replay_ready_signal = true;
+            }
+        }};
 };
 
 } /* namespace ui */

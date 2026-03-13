@@ -34,12 +34,15 @@
 #include <cstdint>
 
 void RDSProcessor::execute(const buffer_c8_t& buffer) {
-    // Audio: Mic provides 24 kHz, we run at 2.28 MHz -> over = 95
-    // File: resampling via resample_acc similar to proc_audiotx
+    if (!configured || !rdsdata) return;
+
+    // Mic audio is 24 kHz, baseband runs at 2.28 MHz.
     constexpr uint32_t audio_over_mic = BASEBAND_FS / 24000;  // 95
 
     if (audio_source == 1) {
         audio_input.read_audio_buffer(audio_buffer);
+        mic_index = 0;
+        mic_phase = 0;
     }
 
     for (size_t i = 0; i < buffer.count; i++) {
@@ -100,41 +103,45 @@ void RDSProcessor::execute(const buffer_c8_t& buffer) {
         }
 
         // --- Audio sample (mic or file) ---
-        int32_t audio_sample = 0;
+        int32_t audio_sample = current_audio_sample;
         if (audio_source == 1) {
-            // Mic: read from audio_input at 24 kHz
-            if (i % audio_over_mic == 0) {
-                size_t idx = (i / audio_over_mic) & (AUDIO_BUF_COUNT - 1);
-                audio_sample = (int32_t)audio_buffer.p[idx];
+            if (++mic_phase >= audio_over_mic) {
+                mic_phase = 0;
+                current_audio_sample = (int32_t)audio_buffer.p[mic_index++];
+                if (mic_index >= AUDIO_BUF_COUNT) {
+                    mic_index = 0;
+                    audio_input.read_audio_buffer(audio_buffer);
+                }
             }
+            audio_sample = current_audio_sample;
         } else if (audio_source == 2 && stream) {
-            // File: resample from stream
             resample_acc += resample_inc;
             if (resample_acc >= 0x10000) {
                 resample_acc -= 0x10000;
                 uint32_t read_val = 0;
-                stream->read(&read_val, bytes_per_sample);
-                if (bytes_per_sample == 1) {
-                    audio_sample = ((int32_t)(read_val & 0xFF) - 128) * 256;
-                } else {
-                    audio_sample = (int32_t)(int16_t)(read_val & 0xFFFF);
+                const auto read = stream->read(&read_val, bytes_per_sample);
+                if (read == bytes_per_sample) {
+                    if (bytes_per_sample == 1) {
+                        current_audio_sample = ((int32_t)(read_val & 0xFF) - 128) * 256;
+                    } else {
+                        current_audio_sample = (int32_t)(int16_t)(read_val & 0xFFFF);
+                    }
                 }
             }
+            audio_sample = current_audio_sample;
+        } else {
+            current_audio_sample = 0;
+            audio_sample = 0;
         }
 
-        // --- Mix: combined = audio * gain + rds * rds_injection_gain ---
-        // Audio scaled for ~75 kHz deviation; RDS subcarrier uses existing scaling
-        int32_t audio_scaled = (int32_t)((float)audio_sample * audio_gain);
-        int32_t rds_scaled = (int32_t)((float)(rds_sample >> 10) * rds_injection_gain * 1024.0f);
-        int32_t combined = audio_scaled + rds_scaled;
+        // Audio drives main FM deviation, RDS remains a low-level injected subcarrier.
+        int64_t audio_delta = (int64_t)((float)audio_sample * audio_gain * (float)fm_delta_audio);
+        int64_t rds_delta = (int64_t)((float)((rds_sample >> 16) * 386760) * rds_injection_gain);
+        int64_t total_delta = audio_delta + rds_delta;
 
-        // Clamp to avoid excessive FM deviation
-        if (combined > 32767) combined = 32767;
-        if (combined < -32768) combined = -32768;
-
-        // --- FM modulation ---
-        delta = combined * fm_delta_audio;
-        delta += (rds_sample >> 16) * 386760;  // RDS delta (original scaling)
+        if (total_delta > INT32_MAX) total_delta = INT32_MAX;
+        if (total_delta < INT32_MIN) total_delta = INT32_MIN;
+        delta = (int32_t)total_delta;
 
         phase += delta;
         sphase = phase + (64 << 18);
@@ -161,6 +168,7 @@ void RDSProcessor::on_message(const Message* const msg) {
             audio_source = message.audio_source;
             audio_gain = message.audio_gain;
             rds_injection_gain = message.rds_injection_gain;
+            current_audio_sample = 0;
             break;
         }
 
@@ -168,6 +176,8 @@ void RDSProcessor::on_message(const Message* const msg) {
             const auto message = *reinterpret_cast<const ReplayConfigMessage*>(msg);
             if (message.config) {
                 stream = std::make_unique<StreamOutput>(message.config);
+                current_audio_sample = 0;
+                resample_acc = 0;
                 RequestSignalMessage sig_msg{RequestSignalMessage::Signal::FillRequest};
                 shared_memory.application_queue.push(sig_msg);
             } else {
@@ -180,6 +190,7 @@ void RDSProcessor::on_message(const Message* const msg) {
             const auto message = *reinterpret_cast<const SampleRateConfigMessage*>(msg);
             resample_inc = (((uint64_t)message.sample_rate) << 16) / BASEBAND_FS;
             bytes_per_sample = 2;  // WAV from Soundboard typically 16-bit
+            resample_acc = 0;
             break;
         }
 
