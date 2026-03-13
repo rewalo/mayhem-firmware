@@ -993,16 +993,19 @@ class RDSAudioConfigMessage : public Message {
     constexpr RDSAudioConfigMessage(
         uint8_t audio_source,
         float audio_gain,
-        float rds_injection_gain)
+        float rds_injection_gain,
+        uint8_t bits_per_sample)
         : Message{ID::RDSAudioConfig},
           audio_source(audio_source),
           audio_gain(audio_gain),
-          rds_injection_gain(rds_injection_gain) {
+          rds_injection_gain(rds_injection_gain),
+          bits_per_sample(bits_per_sample) {
     }
 
     const uint8_t audio_source;   // 0=None, 1=Mic, 2=File
     const float audio_gain;
     const float rds_injection_gain;
+    const uint8_t bits_per_sample;  // 8 or 16 for file/mic source
 };
 
 class RetuneMessage : public Message {

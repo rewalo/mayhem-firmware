@@ -334,11 +334,12 @@ void set_rds_data(const uint16_t message_length) {
     send_message(&message);
 }
 
-void set_rds_audio_config(uint8_t audio_source, float audio_gain, float rds_injection_gain) {
+void set_rds_audio_config(uint8_t audio_source, float audio_gain, float rds_injection_gain, uint8_t bits_per_sample) {
     const RDSAudioConfigMessage message{
         audio_source,
         audio_gain,
-        rds_injection_gain};
+        rds_injection_gain,
+        bits_per_sample};
     send_message(&message);
 }
 

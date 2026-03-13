@@ -168,6 +168,7 @@ void RDSProcessor::on_message(const Message* const msg) {
             audio_source = message.audio_source;
             audio_gain = message.audio_gain;
             rds_injection_gain = message.rds_injection_gain;
+            bytes_per_sample = (message.bits_per_sample == 8) ? 1 : 2;
             current_audio_sample = 0;
             break;
         }

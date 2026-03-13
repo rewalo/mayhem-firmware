@@ -97,7 +97,7 @@ void set_pocsag(int8_t baud_config = -1);
 void set_adsb();
 void set_jammer(const bool run, const jammer::JammerType type, const uint32_t speed);
 void set_rds_data(const uint16_t message_length);
-void set_rds_audio_config(uint8_t audio_source, float audio_gain, float rds_injection_gain);
+void set_rds_audio_config(uint8_t audio_source, float audio_gain, float rds_injection_gain, uint8_t bits_per_sample = 16);
 void set_spectrum(
     const size_t sampling_rate,
     const size_t trigger);

@@ -250,7 +250,7 @@ bool RDSView::start_tx() {
     /* Audio source config to baseband. */
     uint8_t src = view_audio.audio_source_index();
     float rds_gain = (src == 0) ? 1.0f : 0.04f;
-    baseband::set_rds_audio_config(src, 1.0f, rds_gain);
+    uint8_t audio_bps = 16;
 
     /* File mode: start replay before TX */
     if (src == 2) {
@@ -269,6 +269,7 @@ bool RDSView::start_tx() {
             nav_.display_modal("Error", "WAV must be 8 or 16-bit mono.");
             return false;
         }
+        audio_bps = reader->bits_per_sample();
         baseband::set_sample_rate(reader->sample_rate());
         replay_thread = std::make_unique<ReplayThread>(
             std::move(reader),
@@ -280,6 +281,10 @@ bool RDSView::start_tx() {
                 EventDispatcher::send_message(msg);
             });
     }
+
+    // Keep output hot; tune this to max practical loudness.
+    const float max_audio_gain = 2.0f;
+    baseband::set_rds_audio_config(src, max_audio_gain, rds_gain, audio_bps);
 
     transmitter_model.enable();
     tx_thread.reset();

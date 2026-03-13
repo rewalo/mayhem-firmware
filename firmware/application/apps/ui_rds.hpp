@@ -115,24 +115,24 @@ class RDSAudioView : public OptionTabView {
     std::filesystem::path file_path_{};
 
     Labels labels{
-        {{2 * 8, 2 * 8}, "Source:", Theme::getInstance()->fg_light->foreground},
-        {{2 * 8, 6 * 8}, "File:", Theme::getInstance()->fg_light->foreground}};
+        {{2 * 8, 1 * 8}, "Source:", Theme::getInstance()->fg_light->foreground},
+        {{2 * 8, 4 * 8}, "File:", Theme::getInstance()->fg_light->foreground}};
 
     OptionsField options_source{
-        {12 * 8, 2 * 8},
+        {12 * 8, 1 * 8},
         10,
         {{"None", 0},
          {"Mic", 1},
          {"File", 2}}};
 
     Button button_file{
-        {12 * 8, 6 * 8, 8 * 8, 28},
+        {12 * 8, 4 * 8, 8 * 8, 28},
         "Select"};
     Text text_file{
-        {2 * 8, 10 * 8, 26 * 8, 16},
+        {2 * 8, 7 * 8, 26 * 8, 16},
         "-"};
     Button button_mic_hold{
-        {UI_POS_X_CENTER(8), 14 * 8, UI_POS_WIDTH(8), 32},
+        {UI_POS_X_CENTER(8), 10 * 8, UI_POS_WIDTH(8), 32},
         "PTT TX",
         true};
 };
