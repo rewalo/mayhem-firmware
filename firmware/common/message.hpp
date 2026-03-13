@@ -157,6 +157,7 @@ class Message {
         NotificationData = 99,
         TimeSinkConfig = 100,
         EPIRBTXData = 101,
+        RDSAudioConfig = 102,
         MAX
     };
 
@@ -985,6 +986,23 @@ class RDSConfigureMessage : public Message {
     }
 
     const uint16_t length = 0;
+};
+
+class RDSAudioConfigMessage : public Message {
+   public:
+    constexpr RDSAudioConfigMessage(
+        uint8_t audio_source,
+        float audio_gain,
+        float rds_injection_gain)
+        : Message{ID::RDSAudioConfig},
+          audio_source(audio_source),
+          audio_gain(audio_gain),
+          rds_injection_gain(rds_injection_gain) {
+    }
+
+    const uint8_t audio_source;   // 0=None, 1=Mic, 2=File
+    const float audio_gain;
+    const float rds_injection_gain;
 };
 
 class RetuneMessage : public Message {

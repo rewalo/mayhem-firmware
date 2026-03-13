@@ -25,6 +25,10 @@
 #include "portapack.hpp"
 #include "baseband_api.hpp"
 #include "portapack_shared_memory.hpp"
+#include "ui_fileman.hpp"
+#include "file_path.hpp"
+#include "io_wave.hpp"
+#include "replay_thread.hpp"
 
 #include <cstring>
 
@@ -102,12 +106,47 @@ RDSDateTimeView::RDSDateTimeView(
     add_children({&labels});
 }
 
+float RDSAudioView::audio_gain() const {
+    const float gains[] = {0.5f, 1.0f, 1.5f, 2.0f};
+    return gains[options_audio_gain.selected_index()];
+}
+
+float RDSAudioView::rds_injection_gain() const {
+    const float gains[] = {0.02f, 0.03f, 0.04f, 0.05f};
+    return gains[options_rds_level.selected_index()];
+}
+
 RDSAudioView::RDSAudioView(
+    NavigationView& nav,
     Rect parent_rect)
-    : OptionTabView(parent_rect) {
+    : OptionTabView(parent_rect),
+      nav_{nav} {
     set_type("audio");
 
-    add_children({&labels});
+    options_source.on_change = [this](size_t, OptionsField::value_t v) {
+        file_path_.clear();
+        text_file.set("-");
+        button_file.hidden(v != 2);
+        text_file.hidden(v != 2);
+    };
+
+    button_file.on_select = [this, &nav](Button&) {
+        auto open_view = nav.push<FileLoadView>(".WAV");
+        open_view->on_changed = [this](std::filesystem::path path) {
+            file_path_ = path;
+            text_file.set(path.filename().string().substr(0, 22));
+        };
+    };
+
+    button_file.hidden(true);
+    text_file.hidden(true);
+
+    add_children({&labels,
+                  &options_source,
+                  &options_audio_gain,
+                  &options_rds_level,
+                  &button_file,
+                  &text_file});
 }
 
 RDSThread::RDSThread(
@@ -189,6 +228,35 @@ void RDSView::start_tx() {
     else
         frame_datetime.clear();
 
+    /* Audio: send config to baseband */
+    uint8_t src = view_audio.audio_source_index();
+    float rds_gain = (src == 0) ? 1.0f : view_audio.rds_injection_gain();
+    baseband::set_rds_audio_config(src, view_audio.audio_gain(), rds_gain);
+
+    /* File mode: start replay before TX */
+    if (src == 2 && !view_audio.file_path().empty()) {
+        replay_ready_signal = false;
+        auto reader = std::make_unique<WAVFileReader>();
+        if (!reader->open(view_audio.file_path())) {
+            nav_.display_modal("Error", "Cannot open WAV file.");
+            return;
+        }
+        if ((reader->channels() != 1) || ((reader->bits_per_sample() != 8) && (reader->bits_per_sample() != 16))) {
+            nav_.display_modal("Error", "WAV must be 8 or 16-bit mono.");
+            return;
+        }
+        baseband::set_sample_rate(reader->sample_rate());
+        replay_thread = std::make_unique<ReplayThread>(
+            std::move(reader),
+            replay_read_size,
+            replay_buffer_count,
+            &replay_ready_signal,
+            [this](uint32_t code) {
+                ReplayThreadDoneMessage msg{code};
+                EventDispatcher::send_message(msg);
+            });
+    }
+
     transmitter_model.enable();
 
     tx_thread = std::make_unique<RDSThread>(frames);
@@ -235,7 +303,8 @@ RDSView::RDSView(
     };
 
     tx_view.on_stop = [this]() {
-        // Kill tx_thread here ?
+        replay_thread.reset();
+        baseband::replay_stop();
         tx_view.set_transmitting(false);
         transmitter_model.disable();
         txing = false;

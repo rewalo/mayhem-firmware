@@ -25,10 +25,22 @@
 
 #include "baseband_processor.hpp"
 #include "baseband_thread.hpp"
+#include "audio_input.hpp"
+#include "stream_output.hpp"
+#include "message.hpp"
 
 #define SAMPLES_PER_BIT 192
 #define FILTER_SIZE 576
 #define SAMPLE_BUFFER_SIZE SAMPLES_PER_BIT + FILTER_SIZE
+#define BASEBAND_FS 2280000U
+#define AUDIO_BUF_COUNT 64
+
+/* Audio source: 0=None, 1=Mic, 2=File */
+enum class RDSAudioSource : uint8_t {
+    None = 0,
+    Mic = 1,
+    File = 2
+};
 
 class RDSProcessor : public BasebandProcessor {
    public:
@@ -37,6 +49,19 @@ class RDSProcessor : public BasebandProcessor {
 
    private:
     uint32_t* rdsdata{};
+
+    /* Audio: Mic or File -> mix with RDS -> FM */
+    uint8_t audio_source{0};
+    float audio_gain{1.0f};
+    float rds_injection_gain{0.04f};
+    uint32_t fm_delta_audio{7380};  /* 75 kHz * 0xFFFFFF / 2.28M */
+    int16_t audio_data[AUDIO_BUF_COUNT];
+    buffer_s16_t audio_buffer{audio_data, AUDIO_BUF_COUNT};
+    AudioInput audio_input{};
+    std::unique_ptr<StreamOutput> stream{};
+    uint32_t resample_inc{0};
+    uint32_t resample_acc{0};
+    uint8_t bytes_per_sample{2};
 
     uint16_t message_length{0};
     int8_t re{0}, im{0};

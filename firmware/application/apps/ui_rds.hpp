@@ -24,9 +24,14 @@
 #include "ui_transmitter.hpp"
 #include "ui_textentry.hpp"
 #include "ui_tabview.hpp"
+#include "ui_fileman.hpp"
+#include "message.hpp"
 #include "app_settings.hpp"
 #include "radio_state.hpp"
 #include "rds.hpp"
+#include "file_path.hpp"
+#include "message.hpp"
+#include "replay_thread.hpp"
 
 using namespace rds;
 
@@ -97,11 +102,52 @@ class RDSDateTimeView : public OptionTabView {
 
 class RDSAudioView : public OptionTabView {
    public:
-    RDSAudioView(Rect parent_rect);
+    RDSAudioView(NavigationView& nav, Rect parent_rect);
+
+    uint8_t audio_source_index() const { return options_source.selected_index_value(); }
+    float audio_gain() const;
+    float rds_injection_gain() const;
+    const std::filesystem::path& file_path() const { return file_path_; }
 
    private:
+    NavigationView& nav_;
+    std::filesystem::path file_path_{};
+
     Labels labels{
-        {{UI_POS_X_CENTER(19), 5 * 16}, "Not yet implemented", Theme::getInstance()->error_dark->foreground}};
+        {{2 * 8, 2 * 8}, "Source:", Theme::getInstance()->fg_light->foreground},
+        {{2 * 8, 6 * 8}, "Audio gain:", Theme::getInstance()->fg_light->foreground},
+        {{2 * 8, 10 * 8}, "RDS level:", Theme::getInstance()->fg_light->foreground},
+        {{2 * 8, 14 * 8}, "File:", Theme::getInstance()->fg_light->foreground}};
+
+    OptionsField options_source{
+        {12 * 8, 2 * 8},
+        10,
+        {{"None", 0},
+         {"Mic", 1},
+         {"File", 2}}};
+
+    OptionsField options_audio_gain{
+        {12 * 8, 6 * 8},
+        8,
+        {{"50%", 0},
+         {"100%", 1},
+         {"150%", 2},
+         {"200%", 3}}};
+
+    OptionsField options_rds_level{
+        {12 * 8, 10 * 8},
+        8,
+        {{"2%", 0},
+         {"3%", 1},
+         {"4%", 2},
+         {"5%", 3}}};
+
+    Button button_file{
+        {12 * 8, 14 * 8, 8 * 8, 28},
+        "Select"};
+    Text text_file{
+        {2 * 8, 16 * 8, 26 * 8, 16},
+        "-"};
 };
 
 class RDSThread {
@@ -165,7 +211,7 @@ class RDSView : public View {
     RDSPSNView view_PSN{nav_, view_rect};
     RDSRadioTextView view_radiotext{nav_, view_rect};
     RDSDateTimeView view_datetime{view_rect};
-    RDSAudioView view_audio{view_rect};
+    RDSAudioView view_audio{nav_, view_rect};
 
     TabView tab_view{
         {"Name", Theme::getInstance()->fg_cyan->foreground, &view_PSN},
