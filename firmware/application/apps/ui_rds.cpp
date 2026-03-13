@@ -124,7 +124,7 @@ RDSAudioView::RDSAudioView(
     set_type("audio");
 
     options_source.on_change = [this](size_t, OptionsField::value_t v) {
-        file_path_.clear();
+        file_path_ = std::filesystem::path{};
         text_file.set("-");
         button_file.hidden(v != 2);
         text_file.hidden(v != 2);

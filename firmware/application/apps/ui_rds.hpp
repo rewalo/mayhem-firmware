@@ -370,6 +370,12 @@ class RDSView : public View {
         9};
 
     std::unique_ptr<RDSThread> tx_thread{};
+
+    /* Audio file replay (when source=File) */
+    const size_t replay_read_size{2048};
+    const size_t replay_buffer_count{3};
+    std::unique_ptr<ReplayThread> replay_thread{};
+    bool replay_ready_signal{false};
 };
 
 } /* namespace ui */
